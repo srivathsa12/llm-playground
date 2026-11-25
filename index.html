@@ -1,0 +1,2425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#07070a">
+<title>LLM Playground</title>
+<meta name="description" content="Send prompts to real Groq models and watch the request, the streamed reply, the thinking tokens and the token budget, live. Built as teaching material for first-year engineering students.">
+<meta property="og:title" content="LLM Playground">
+<meta property="og:description" content="Real streaming Groq API calls, with the request, tokens and speed made visible.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3CradialGradient id='g' cx='.35' cy='.3' r='.8'%3E%3Cstop offset='0' stop-color='%23ffd2b3'/%3E%3Cstop offset='.45' stop-color='%23ff7a2e'/%3E%3Cstop offset='1' stop-color='%23a8380d'/%3E%3C/radialGradient%3E%3C/defs%3E%3Ccircle cx='16' cy='16' r='14' fill='url(%23g)'/%3E%3C/svg%3E">
+
+<style>
+/* =========================================================
+   WHAT THIS DOES: Design tokens (colours, glass, type, motion).
+   Change a value here and it changes everywhere on the page.
+   ========================================================= */
+:root {
+  /* Base and text */
+  --bg:          #07070a;
+  --ink:         #f4f3ef;
+  --ink-2:       rgba(244, 243, 239, 0.78);
+  --muted:       rgba(244, 243, 239, 0.58);
+  --line:        rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.16);
+
+  /* Glass: a see-through fill + blur of whatever is behind it */
+  --glass:       rgba(20, 20, 26, 0.42);
+  --glass-solid: rgba(20, 20, 26, 0.92);   /* used when blur is not supported */
+  --glass-inner: rgba(255, 255, 255, 0.035);
+  --glass-hover: rgba(255, 255, 255, 0.06);
+  --blur:        blur(24px) saturate(160%);
+
+  /* The one warm accent */
+  --accent:      #ff7a2e;
+  --accent-soft: rgba(255, 122, 46, 0.14);
+  --accent-half: rgba(255, 122, 46, 0.45);
+  --accent-glow: 0 0 0 1px rgba(255, 122, 46, 0.6), 0 8px 28px -6px rgba(255, 122, 46, 0.55);
+  --on-accent:   #140a04;
+
+  /* State colours (only ever used to show a state) */
+  --green: #3ecf6e;
+  --amber: #f2b33d;
+  --red:   #ff6b6b;
+
+  /* Type */
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --t-display: clamp(30px, 1rem + 2.4vw, 56px);
+
+  /* Shape and depth */
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 20px;
+  --hi: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  --window-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 1px 2px rgba(0, 0, 0, 0.5), 0 30px 60px -30px rgba(0, 0, 0, 0.9);
+
+  /* Motion: one easing family */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --d-press: 0.08s;
+  --d-fast: 0.16s;
+  --d-ui: 0.24s;
+  --d-glow: 1.2s;
+  --d-reveal: 0.72s;
+}
+
+/* WHAT THIS DOES: Basic page reset. */
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 14px/1.5 var(--font-sans);
+  letter-spacing: -0.006em;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px;
+  overflow: hidden;
+}
+button, input, select, textarea { font: inherit; color: inherit; letter-spacing: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+::selection { background: var(--accent-half); }
+
+/* WHAT THIS DOES: Thin, quiet scrollbars that suit the glass. */
+* { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.14) transparent; }
+
+/* =========================================================
+   WHAT THIS DOES: Signature element, the "light field".
+   Soft glows behind the glass. They drift slowly and get
+   brighter while tokens are streaming (body.is-streaming).
+   ========================================================= */
+.backdrop { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; }
+.orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.75;
+  transition: opacity var(--d-glow) var(--ease-out), transform var(--d-glow) var(--ease-out);
+}
+.orb-a { width: 46vw; height: 46vw; left: 18vw; top: -18vw; background: radial-gradient(circle, rgba(255, 122, 46, 0.7), transparent 65%); animation: drift-a 38s ease-in-out infinite alternate; }
+.orb-b { width: 38vw; height: 38vw; right: -10vw; bottom: -14vw; background: radial-gradient(circle, rgba(214, 74, 28, 0.6), transparent 65%); animation: drift-b 44s ease-in-out infinite alternate; }
+.orb-c { width: 30vw; height: 30vw; left: -8vw; bottom: 4vh; background: radial-gradient(circle, rgba(150, 150, 175, 0.22), transparent 65%); animation: drift-a 52s ease-in-out infinite alternate-reverse; }
+body.is-streaming .orb-a { opacity: 1; transform: scale(1.15); }
+body.is-streaming .orb-b { opacity: 1; transform: scale(1.1); }
+@keyframes drift-a { to { transform: translate3d(8vw, 6vh, 0) scale(1.12); } }
+@keyframes drift-b { to { transform: translate3d(-10vw, -8vh, 0) scale(0.9); } }
+
+/* WHAT THIS DOES: Fine film grain over everything, for richness. */
+.grain {
+  position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: 0.06;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+/* WHAT THIS DOES: Shared glass surface. */
+.glass {
+  background: var(--glass);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+  border: 1px solid var(--line);
+  box-shadow: var(--window-shadow);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass { background: var(--glass-solid); }
+}
+
+/* WHAT THIS DOES: Windows slide in once when the page opens. */
+.window-in { animation: window-in var(--d-reveal) var(--ease-out) both; }
+.window-in:nth-child(2) { animation-delay: 0.08s; }
+.window-in:nth-child(3) { animation-delay: 0.16s; }
+@keyframes window-in { from { opacity: 0; transform: translateY(16px) scale(0.985); } }
+
+/* WHAT THIS DOES: Keyboard users can jump straight to the prompt box. */
+.skip-link {
+  position: absolute; left: 14px; top: -60px; z-index: 10;
+  background: var(--accent); color: var(--on-accent);
+  padding: 8px 14px; border-radius: var(--r-sm); font-weight: 600;
+}
+.skip-link:focus { top: 14px; }
+
+/* =========================================================
+   WHAT THIS DOES: Floating top bar.
+   ========================================================= */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 8px 16px;
+  border-radius: var(--r-lg);
+  flex-wrap: wrap;
+  flex: none;
+}
+.topbar h1 {
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+  margin: 0 auto 0 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.logo-dot {
+  width: 22px; height: 22px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #ffd2b3, var(--accent) 45%, #a8380d 100%);
+  box-shadow: 0 0 18px rgba(255, 122, 46, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+.topbar h1 small { font: 500 11px var(--font-mono); color: var(--muted); letter-spacing: 0; }
+.topbar select { width: 290px; max-width: 100%; border-radius: 999px; padding-left: 14px; }
+.live-badge {
+  display: inline-flex; align-items: center; gap: 7px;
+  font: 600 11px/1 var(--font-mono);
+  letter-spacing: 0.04em;
+  color: var(--green);
+  border: 1px solid rgba(62, 207, 110, 0.4);
+  background: rgba(62, 207, 110, 0.1);
+  border-radius: 999px;
+  padding: 10px 12px;
+}
+.live-badge::before {
+  content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--green);
+  box-shadow: 0 0 0 0 rgba(62, 207, 110, 0.6);
+  animation: ping 2.4s var(--ease-out) infinite;
+}
+@keyframes ping { 70%, 100% { box-shadow: 0 0 0 7px rgba(62, 207, 110, 0); } }
+
+/* =========================================================
+   WHAT THIS DOES: Three glass windows: 290px | chat | 350px.
+   ========================================================= */
+.layout {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 290px minmax(0, 1fr) 350px;
+  gap: 14px;
+  min-height: 0;
+}
+.column {
+  border-radius: var(--r-lg);
+  overflow-y: auto;
+  min-height: 0;
+  position: relative;
+}
+.middle { display: flex; flex-direction: column; overflow: hidden; }
+.window-body { padding: 16px; }
+
+/* WHAT THIS DOES: The title bar on top of every window. */
+.window-bar {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(16, 16, 22, 0.6);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+}
+.window-bar h2 {
+  margin: 0;
+  font: 600 11px/1 var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.window-bar .hint { font: 11px var(--font-mono); color: var(--muted); }
+.chat-state { display: inline-flex; align-items: center; gap: 6px; }
+.chat-state::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+body.is-streaming .chat-state { color: var(--accent); }
+body.is-streaming .chat-state::before { background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+
+/* WHAT THIS DOES: Light sweep across the chat window while streaming. */
+.sweep {
+  position: absolute; left: 0; right: 0; top: 0; height: 2px; z-index: 3; overflow: hidden;
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+  opacity: 0; transition: opacity var(--d-ui) var(--ease-out);
+}
+.sweep::after {
+  content: ""; position: absolute; top: 0; bottom: 0; width: 40%;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  transform: translateX(-100%);
+}
+body.is-streaming .sweep { opacity: 1; }
+body.is-streaming .sweep::after { animation: sweep 1.4s var(--ease-out) infinite; }
+@keyframes sweep { to { transform: translateX(260%); } }
+
+/* WHAT THIS DOES: Below 1100px, stack the windows. Chat goes first. */
+@media (max-width: 1100px) {
+  html, body { height: auto; }
+  body { overflow: visible; padding: 10px; gap: 10px; }
+  .layout { grid-template-columns: minmax(0, 1fr); flex: none; gap: 10px; }
+  .column { overflow: visible; min-width: 0; }
+  .middle { order: 1; height: 86vh; min-height: 540px; }
+  .left   { order: 2; }
+  .right  { order: 3; }
+  .window-bar { position: static; }
+  .topbar select { width: 100%; order: 3; }
+  input, select, textarea { font-size: 16px !important; }   /* stops phones zooming in */
+}
+
+/* =========================================================
+   WHAT THIS DOES: Form controls.
+   ========================================================= */
+.section-label {
+  font: 600 11px/1 var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 10px;
+}
+.field { margin-bottom: 22px; }
+.field-title { display: block; font-weight: 600; letter-spacing: -0.015em; margin-bottom: 7px; }
+.note { font-size: 12px; color: var(--muted); margin-top: 6px; }
+.note.warn { color: var(--amber); }
+.note.bad { color: var(--red); }
+.note.good { color: var(--green); }
+
+input[type="text"], input[type="password"], input[type="number"], select, textarea {
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid var(--line-strong);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+  border-radius: var(--r-sm);
+  padding: 8px 11px;
+  width: 100%;
+  min-height: 38px;
+  transition: border-color var(--d-fast) var(--ease-out), box-shadow var(--d-fast) var(--ease-out);
+}
+input:hover, select:hover, textarea:hover { border-color: rgba(255, 255, 255, 0.26); }
+input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-soft), inset 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+select { cursor: pointer; }
+select:disabled { opacity: 0.5; cursor: not-allowed; }
+option, optgroup { background: #16161c; color: var(--ink); }
+input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px; }
+
+/* WHAT THIS DOES: Sliders with an orange filled part (--fill is set by JS). */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%; height: 22px;
+  background: transparent;
+  cursor: pointer;
+  --fill: 50%;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 6px; border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent) var(--fill), rgba(255, 255, 255, 0.12) var(--fill));
+}
+input[type="range"]::-moz-range-track { height: 6px; border-radius: 999px; background: rgba(255, 255, 255, 0.12); }
+input[type="range"]::-moz-range-progress { height: 6px; border-radius: 999px; background: var(--accent); }
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px; height: 18px; margin-top: -6px; border-radius: 50%;
+  background: #fff; border: 3px solid var(--accent);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5), 0 0 0 0 var(--accent-soft);
+  transition: box-shadow var(--d-fast) var(--ease-out);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 14px; height: 14px; border-radius: 50%;
+  background: #fff; border: 3px solid var(--accent);
+}
+input[type="range"]:hover::-webkit-slider-thumb { box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5), 0 0 0 6px var(--accent-soft); }
+input[type="range"]:focus-visible { outline: none; }
+input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 6px var(--accent-half); }
+
+/* WHAT THIS DOES: Buttons. */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  background: var(--glass-inner);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--hi);
+  border-radius: var(--r-sm);
+  padding: 7px 14px;
+  min-height: 38px;
+  cursor: pointer;
+  font-weight: 500;
+  transition: border-color var(--d-fast) var(--ease-out), background-color var(--d-fast) var(--ease-out), box-shadow var(--d-fast) var(--ease-out), transform var(--d-press) var(--ease-out);
+}
+.btn:hover { background: var(--glass-hover); border-color: rgba(255, 255, 255, 0.28); }
+.btn:active { transform: scale(0.97); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+.btn-primary {
+  background: linear-gradient(180deg, #ff9150, var(--accent));
+  border-color: transparent;
+  color: var(--on-accent);
+  font-weight: 650;
+  box-shadow: var(--accent-glow), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+.btn-primary:hover { background: linear-gradient(180deg, #ffa06a, #ff8640); border-color: transparent; }
+.btn-stop {
+  background: rgba(255, 107, 107, 0.12);
+  border-color: rgba(255, 107, 107, 0.6);
+  color: var(--red);
+  font-weight: 650;
+}
+.btn-stop:hover { background: rgba(255, 107, 107, 0.2); border-color: var(--red); }
+.btn-small { min-height: 28px; padding: 3px 10px; font-size: 12px; white-space: nowrap; border-radius: 8px; }
+.btn-wide { width: 100%; }
+@media (pointer: coarse) {
+  .btn, input[type="text"], input[type="password"], input[type="number"], select { min-height: 44px; }
+}
+
+.slider-row { display: flex; gap: 10px; align-items: center; }
+.slider-row input[type="number"] { width: 78px; flex: none; font-family: var(--font-mono); font-size: 13px; text-align: center; }
+.key-row { display: flex; gap: 6px; margin-top: 9px; align-items: center; justify-content: space-between; }
+.check-label { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--ink-2); cursor: pointer; }
+
+/* WHAT THIS DOES: Group the two toggles in one glass tray. */
+.toggle-tray {
+  border: 1px solid var(--line);
+  background: var(--glass-inner);
+  border-radius: var(--r-md);
+  padding: 4px 12px;
+  margin-bottom: 18px;
+}
+.toggle-tray .field { margin: 0; padding: 10px 0; }
+.toggle-tray .field + .field { border-top: 1px solid var(--line); }
+
+/* WHAT THIS DOES: On/off switches built from a real checkbox. */
+.toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.switch { position: relative; width: 42px; height: 24px; flex: none; }
+.switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; z-index: 1; }
+.switch .track {
+  position: absolute; inset: 0; pointer-events: none;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  transition: background-color var(--d-ui) var(--ease-out), border-color var(--d-ui) var(--ease-out), box-shadow var(--d-ui) var(--ease-out);
+}
+.switch .track::before {
+  content: ""; position: absolute; left: 3px; top: 3px;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: rgba(255, 255, 255, 0.55);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  transition: transform var(--d-ui) var(--ease-out), background-color var(--d-ui) var(--ease-out);
+}
+.switch input:checked + .track { background: var(--accent-soft); border-color: var(--accent); box-shadow: 0 0 14px -2px rgba(255, 122, 46, 0.6); }
+.switch input:checked + .track::before { transform: translateX(18px); background: #fff; }
+.switch input:focus-visible + .track { outline: 2px solid var(--accent); outline-offset: 2px; }
+.switch input:disabled { cursor: not-allowed; }
+.switch input:disabled + .track { opacity: 0.4; box-shadow: none; }
+
+/* =========================================================
+   WHAT THIS DOES: Chat messages.
+   ========================================================= */
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 22px max(22px, calc((100% - 980px) / 2));   /* keeps lines readable on very wide screens */
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.empty-hint { margin: auto; text-align: center; color: var(--muted); max-width: 460px; }
+.empty-hint .display {
+  display: block;
+  color: var(--ink);
+  font-size: var(--t-display);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.045em;
+  margin-bottom: 14px;
+  text-wrap: balance;
+}
+.empty-hint .display em {
+  font-style: normal;
+  background: linear-gradient(180deg, #ffc49e, var(--accent));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.steps { display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; margin-top: 18px; }
+.steps span {
+  font: 11px var(--font-mono); color: var(--ink-2);
+  border: 1px solid var(--line-strong); background: var(--glass-inner);
+  border-radius: 999px; padding: 6px 11px;
+}
+
+.msg { max-width: 82%; min-width: 0; animation: msg-in 0.42s var(--ease-out) both; }
+@keyframes msg-in { from { opacity: 0; transform: translateY(8px); } }
+.msg.user { align-self: flex-end; }
+.msg.assistant { align-self: flex-start; width: 82%; }
+.bubble { padding: 12px 15px; border-radius: var(--r-md); overflow-wrap: anywhere; }
+.msg.user .bubble {
+  background: linear-gradient(180deg, rgba(255, 122, 46, 0.2), rgba(255, 122, 46, 0.1));
+  border: 1px solid var(--accent-half);
+  box-shadow: inset 0 1px 0 rgba(255, 200, 160, 0.18), 0 10px 30px -18px rgba(255, 122, 46, 0.6);
+  border-bottom-right-radius: 4px;
+  white-space: pre-wrap;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.msg.assistant .bubble {
+  background: var(--glass-inner);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--hi), 0 14px 34px -24px rgba(0, 0, 0, 0.9);
+  border-bottom-left-radius: 4px;
+}
+.reply-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 7px; }
+.meta { font: 11px/1.4 var(--font-mono); color: var(--muted); display: flex; gap: 6px; flex-wrap: wrap; }
+.meta span { border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; background: var(--glass-inner); }
+.meta span:first-child { color: var(--ink-2); }
+.reply-tools { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+
+/* WHAT THIS DOES: Stop-reason badge. */
+.stop-badge {
+  font: 500 11px/1 var(--font-mono);
+  padding: 7px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--glass-inner);
+  color: var(--ink-2);
+}
+.stop-badge.length { border-color: var(--amber); color: var(--amber); background: rgba(242, 179, 61, 0.08); }
+.stop-badge.stopped { border-style: dashed; }
+
+/* WHAT THIS DOES: The token budget meter under each reply. */
+.budget { margin-top: 12px; }
+.budget-track {
+  display: flex;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.35);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--line);
+  overflow: hidden;
+}
+.budget-think  { background: repeating-linear-gradient(135deg, rgba(255, 122, 46, 0.5) 0 4px, rgba(255, 122, 46, 0.3) 4px 8px); }
+.budget-answer { background: linear-gradient(180deg, #ff9a5c, var(--accent)); box-shadow: 0 0 12px rgba(255, 122, 46, 0.7); }
+.budget-label { font: 11px/1.4 var(--font-mono); color: var(--muted); margin-top: 6px; }
+.budget-label .k-think { color: #ffb183; }
+.budget-label .k-answer { color: var(--accent); }
+
+/* WHAT THIS DOES: Collapsible panels (thinking, request sent). */
+details.panel {
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  margin-bottom: 8px;
+  background: rgba(0, 0, 0, 0.22);
+}
+details.panel > summary {
+  cursor: pointer;
+  padding: 8px 11px;
+  font: 12px/1.4 var(--font-mono);
+  color: var(--ink-2);
+  list-style: none;
+  display: flex; align-items: center; gap: 7px;
+  border-radius: var(--r-sm);
+  transition: background-color var(--d-fast) var(--ease-out);
+}
+details.panel > summary:hover { background: var(--glass-inner); }
+details.panel > summary::-webkit-details-marker { display: none; }
+details.panel > summary::before { content: "▸"; color: var(--accent); transition: transform var(--d-fast) var(--ease-out); }
+details.panel[open] > summary::before { transform: rotate(90deg); }
+details.panel pre {
+  margin: 0;
+  padding: 9px 11px 11px;
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font: 12px/1.55 var(--font-mono);
+  color: var(--ink-2);
+  border-top: 1px solid var(--line);
+}
+.thinking-text { font-family: var(--font-sans) !important; font-size: 13px !important; font-style: italic; }
+
+.status-line { font: 12px var(--font-mono); color: var(--accent); margin-bottom: 6px; }
+.status-line::after { content: "▍"; animation: blink 1s steps(2) infinite; margin-left: 2px; }
+@keyframes blink { 50% { opacity: 0; } }
+
+/* WHAT THIS DOES: Rendered markdown inside replies. */
+.md { line-height: 1.6; }
+.md > *:first-child { margin-top: 0; }
+.md > *:last-child { margin-bottom: 0; }
+.md p { margin: 0 0 10px; }
+.md h3, .md h4, .md h5 { margin: 16px 0 6px; letter-spacing: -0.03em; line-height: 1.15; }
+.md h3 { font-size: 20px; }
+.md h4 { font-size: 17px; }
+.md h5 { font-size: 14px; }
+.md ul, .md ol { margin: 0 0 10px; padding-left: 22px; }
+.md li { margin: 3px 0; }
+.md li::marker { color: var(--accent); }
+.md strong { color: #fff; }
+.md code { font: 12.5px var(--font-mono); background: rgba(0, 0, 0, 0.35); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; }
+.md sup a, .md sup { color: var(--accent); font: 10px var(--font-mono); text-decoration: none; }
+.md sup a:hover { text-decoration: underline; }
+.code-block { border: 1px solid var(--line-strong); border-radius: var(--r-sm); margin: 0 0 10px; overflow: hidden; background: rgba(0, 0, 0, 0.4); }
+.code-head {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 5px 6px 5px 12px;
+  border-bottom: 1px solid var(--line);
+  font: 11px var(--font-mono); color: var(--muted);
+}
+.code-block pre { margin: 0; padding: 12px; overflow-x: auto; }
+.code-block pre code { background: none; border: none; padding: 0; font-size: 12.5px; }
+
+/* WHAT THIS DOES: Web search source cards. */
+.sources { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; margin-top: 12px; }
+.source-card {
+  display: block; text-decoration: none; color: var(--ink);
+  border: 1px solid var(--line-strong); border-radius: var(--r-sm);
+  padding: 9px 11px; background: var(--glass-inner);
+  box-shadow: var(--hi);
+  transition: border-color var(--d-fast) var(--ease-out), transform var(--d-ui) var(--ease-out);
+  min-width: 0;
+}
+@media (hover: hover) and (pointer: fine) {
+  .source-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+}
+.source-card .num { font: 11px var(--font-mono); color: var(--accent); }
+.source-card .title { display: block; font-size: 12.5px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.source-card .host { display: block; font: 11px var(--font-mono); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* WHAT THIS DOES: Plain-language error box. */
+.error-box { border: 1px solid rgba(255, 107, 107, 0.5); background: rgba(255, 107, 107, 0.08); border-radius: var(--r-sm); padding: 10px 12px; margin-top: 8px; }
+.error-box strong { color: var(--red); display: block; font-weight: 600; }
+.error-box .raw { font: 11px/1.4 var(--font-mono); color: var(--muted); margin-top: 5px; overflow-wrap: anywhere; }
+
+/* =========================================================
+   WHAT THIS DOES: Prompt box at the bottom of the chat.
+   ========================================================= */
+.composer { padding: 12px max(22px, calc((100% - 980px) / 2)) 16px; border-top: 1px solid var(--line); background: rgba(10, 10, 14, 0.35); }
+.composer-shell {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: rgba(0, 0, 0, 0.3);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
+  transition: border-color var(--d-fast) var(--ease-out), box-shadow var(--d-fast) var(--ease-out);
+}
+.composer-shell:focus-within { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+.composer textarea {
+  font: 13px/1.6 var(--font-mono);
+  height: 170px;
+  resize: vertical;
+  display: block;
+  border: none;
+  box-shadow: none;
+  background: transparent;
+  padding: 12px 14px;
+}
+.composer textarea:focus-visible { box-shadow: none; }
+.composer-bar { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 8px 8px 14px; border-top: 1px solid var(--line); }
+.composer-bar .btn-primary, .composer-bar .btn-stop { min-width: 110px; }
+kbd { font: 11px var(--font-mono); border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 5px; padding: 0 5px; background: var(--glass-inner); }
+
+/* =========================================================
+   WHAT THIS DOES: Right-hand insight cards (instrument panel).
+   ========================================================= */
+.card {
+  background: var(--glass-inner);
+  border: 1px solid var(--line);
+  box-shadow: var(--hi);
+  border-radius: var(--r-md);
+  padding: 14px;
+  margin-bottom: 12px;
+}
+.readouts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.readout {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 9px 11px;
+}
+.readout .label { font-size: 11.5px; color: var(--muted); }
+.readout .value {
+  font: 500 22px/1.2 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.04em;
+  margin-top: 2px;
+}
+.readout .value small { font-size: 12px; color: var(--muted); letter-spacing: 0; }
+.readout.wide { grid-column: 1 / -1; }
+.readout.hero { background: linear-gradient(180deg, rgba(255, 122, 46, 0.12), rgba(255, 122, 46, 0.03)); border-color: var(--accent-half); }
+.readout.hero .value { font-size: 30px; color: #ffd8bf; }
+.readout .value.warn { color: var(--amber); }
+.readout .value.pop { animation: pop 0.42s var(--ease-out); }
+@keyframes pop { from { opacity: 0.2; transform: translateY(5px); } }
+.readout .value.dim { color: var(--muted); font-size: 13px; letter-spacing: 0; }
+
+.shot-badge {
+  display: inline-block;
+  font: 650 15px/1 var(--font-mono);
+  letter-spacing: 0.01em;
+  padding: 9px 13px;
+  border-radius: var(--r-sm);
+  background: linear-gradient(180deg, rgba(255, 122, 46, 0.24), rgba(255, 122, 46, 0.1));
+  color: #ffd8bf;
+  border: 1px solid var(--accent-half);
+  box-shadow: 0 8px 24px -12px rgba(255, 122, 46, 0.7);
+}
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 4px; }
+.chip { font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.chip.on { border-color: var(--accent-half); color: var(--ink); background: var(--accent-soft); }
+.why-title { font-size: 12px; color: var(--muted); margin: 14px 0 4px; }
+.why-list { list-style: none; padding: 0; margin: 0; font-size: 12px; }
+.why-list li { padding: 6px 0; border-top: 1px solid var(--line); }
+.why-list .mark { display: inline-block; width: 18px; font-weight: 700; }
+.why-list .yes .mark { color: var(--green); }
+.why-list .no { color: var(--muted); }
+.why-list .matched {
+  display: block; margin: 3px 0 0 18px;
+  font: 11px var(--font-mono); color: var(--ink-2);
+  background: rgba(0, 0, 0, 0.25); border-radius: 6px; padding: 3px 7px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* =========================================================
+   WHAT THIS DOES: "View code" pop-up.
+   ========================================================= */
+dialog {
+  width: min(900px, 94vw);
+  max-height: 88vh;
+  color: var(--ink);
+  border-radius: var(--r-lg);
+  padding: 0;
+  background: rgba(20, 20, 26, 0.72);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--window-shadow);
+}
+dialog[open] { animation: window-in 0.42s var(--ease-out) both; }
+dialog::backdrop { background: rgba(4, 4, 8, 0.55); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+.dialog-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.dialog-head h2 { margin: 0; font-size: 17px; letter-spacing: -0.03em; }
+.dialog-body { padding: 16px; overflow: auto; max-height: calc(88vh - 60px); }
+.dialog-body > .note code { font-family: var(--font-mono); color: var(--ink); }
+.code-title { display: flex; justify-content: space-between; align-items: center; margin: 4px 0 8px; }
+.code-title h3 { margin: 0; font-size: 13px; letter-spacing: -0.01em; }
+.dialog-body pre {
+  margin: 0 0 18px; padding: 14px;
+  background: rgba(0, 0, 0, 0.45); border: 1px solid var(--line); border-radius: var(--r-sm);
+  font: 12px/1.6 var(--font-mono);
+  overflow-x: auto;
+  white-space: pre;
+}
+
+/* WHAT THIS DOES: Respect "reduce motion" in the operating system. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0.01ms !important; animation: none !important; }
+}
+</style>
+</head>
+
+<body>
+<a href="#promptBox" class="skip-link">Skip to prompt</a>
+
+<!-- WHAT THIS DOES: The glowing "light field" behind the glass. Decoration only. -->
+<div class="backdrop" aria-hidden="true">
+  <div class="orb orb-a"></div>
+  <div class="orb orb-b"></div>
+  <div class="orb orb-c"></div>
+</div>
+<div class="grain" aria-hidden="true"></div>
+
+<!-- =========================================================
+     WHAT THIS DOES: Top bar.
+     ========================================================= -->
+<header class="topbar glass window-in">
+  <h1><span class="logo-dot" aria-hidden="true"></span>LLM Playground <small>on Groq</small></h1>
+  <select id="modelSelect" aria-label="Model"></select>
+  <button class="btn" id="viewCodeBtn" type="button">View code</button>
+  <span class="live-badge">LIVE real API calls</span>
+</header>
+
+<main class="layout">
+
+  <!-- =========================================================
+       WHAT THIS DOES: LEFT COLUMN, the parameters.
+       ========================================================= -->
+  <aside class="column left glass window-in" aria-label="Parameters">
+    <div class="window-bar"><h2>Parameters</h2><span class="hint">sent with every request</span></div>
+    <div class="window-body">
+
+    <div class="field">
+      <label class="field-title" for="apiKey">API key</label>
+      <input type="password" id="apiKey" placeholder="gsk_..." autocomplete="off" spellcheck="false">
+      <div class="key-row">
+        <label class="check-label"><input type="checkbox" id="rememberKey"> Remember key in this tab</label>
+        <button class="btn btn-small" id="clearKeyBtn" type="button">Clear key</button>
+      </div>
+      <div class="note" id="keyStatus">Your key goes straight from this page to Groq. Nothing is saved to a file.</div>
+      <div class="note" id="modelStatus">Using the built-in model list (not loaded from the API).</div>
+    </div>
+
+    <div class="field">
+      <label class="field-title" for="tempSlider">Temperature</label>
+      <div class="slider-row">
+        <input type="range" id="tempSlider" min="0" max="2" step="0.05" value="0.7" aria-label="Temperature slider">
+        <input type="number" id="tempNumber" min="0" max="2" step="0.05" value="0.7" aria-label="Temperature value">
+      </div>
+      <div class="note">Low is predictable. High is more random.</div>
+    </div>
+
+    <div class="field">
+      <label class="field-title" for="maxSlider">Max tokens</label>
+      <div class="slider-row">
+        <input type="range" id="maxSlider" min="50" max="1000" step="50" value="300" aria-label="Max tokens slider">
+        <input type="number" id="maxNumber" min="50" max="1000" step="50" value="300" aria-label="Max tokens value">
+      </div>
+      <div class="note">On reasoning models this budget includes the thinking tokens.</div>
+    </div>
+
+    <div class="field">
+      <label class="field-title" for="stopInput">Stop sequences</label>
+      <input type="text" id="stopInput" placeholder="e.g. ###, Review:" spellcheck="false">
+      <div class="note">Comma separated, up to 4. Only sent when not empty.</div>
+    </div>
+
+    <div class="toggle-tray">
+    <div class="field">
+      <div class="toggle-row">
+        <label class="field-title" for="webSearchToggle" style="margin: 0;">Web search</label>
+        <span class="switch"><input type="checkbox" id="webSearchToggle"><span class="track"></span></span>
+      </div>
+      <div class="note">Costs more: the pages it reads are added to your tokens.</div>
+      <div class="note warn" id="webSearchReason"></div>
+    </div>
+
+    <div class="field">
+      <div class="toggle-row">
+        <label class="field-title" for="reasoningToggle" style="margin: 0;">Reasoning</label>
+        <span class="switch"><input type="checkbox" id="reasoningToggle"><span class="track"></span></span>
+      </div>
+      <div class="note">Costs more: thinking tokens count as output and use up max tokens.</div>
+      <div class="note warn" id="reasoningReason"></div>
+    </div>
+    </div>
+
+    <button class="btn btn-wide" id="resetBtn" type="button">Reset conversation</button>
+    </div>
+  </aside>
+
+  <!-- =========================================================
+       WHAT THIS DOES: MIDDLE COLUMN, the chat.
+       ========================================================= -->
+  <section class="column middle glass window-in" aria-label="Chat">
+    <div class="sweep" aria-hidden="true"></div>
+    <div class="window-bar"><h2>Conversation</h2><span class="hint chat-state" id="chatState">Idle</span></div>
+    <div class="messages" id="messages" aria-live="polite">
+      <div class="empty-hint" id="emptyHint">
+        <span class="display">Talk to a <em>real</em> model.</span>
+        Paste your Groq key, tweak the parameters, press Submit. Every reply is a live API call you can inspect.
+        <div class="steps"><span>1. paste key</span><span>2. pick a model</span><span>3. submit</span></div>
+      </div>
+    </div>
+
+    <div class="composer">
+      <label for="promptBox" class="section-label" style="display: block;">Prompt</label>
+      <div class="composer-shell">
+      <textarea id="promptBox" spellcheck="false"></textarea>
+      <div class="composer-bar">
+        <span class="note" style="margin: 0;"><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd> to submit, <kbd>Esc</kbd> to stop</span>
+        <button class="btn btn-primary" id="submitBtn" type="button">Submit</button>
+      </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================================================
+       WHAT THIS DOES: RIGHT COLUMN, the insight panels.
+       ========================================================= -->
+  <aside class="column right glass window-in" aria-label="Insights">
+    <div class="window-bar"><h2>Insights</h2><span class="hint">updates live</span></div>
+    <div class="window-body">
+
+    <div class="card">
+      <p class="section-label">Prompt analysis</p>
+      <span class="shot-badge" id="shotBadge">ZERO-SHOT</span>
+      <div class="chips" id="techniqueChips"></div>
+      <div class="why-title">Why (the largest count from one rule wins, never the sum)</div>
+      <ul class="why-list" id="whyList"></ul>
+    </div>
+
+    <div class="card">
+      <p class="section-label">Speed</p>
+      <div class="readouts">
+        <div class="readout"><div class="label">Time to first token</div><div class="value" id="statTtft">–</div></div>
+        <div class="readout"><div class="label">Total time</div><div class="value" id="statTotal">–</div></div>
+        <div class="readout wide hero"><div class="label">Tokens per second</div><div class="value" id="statTps">–</div></div>
+      </div>
+      <div class="note" id="speedNote"></div>
+    </div>
+
+    <div class="card">
+      <p class="section-label">Token usage (from the API)</p>
+      <div class="readouts">
+        <div class="readout"><div class="label">Input</div><div class="value" id="useInput">–</div></div>
+        <div class="readout"><div class="label">Reasoning</div><div class="value" id="useReasoning">–</div></div>
+        <div class="readout"><div class="label">Output</div><div class="value" id="useOutput">–</div></div>
+        <div class="readout"><div class="label">Total</div><div class="value" id="useTotal">–</div></div>
+        <div class="readout wide"><div class="label">Tokens left this minute</div><div class="value" id="useLeft">–</div></div>
+      </div>
+      <div class="note">Output includes the reasoning tokens.</div>
+    </div>
+    </div>
+  </aside>
+</main>
+
+<!-- =========================================================
+     WHAT THIS DOES: "View code" pop-up with curl and Python.
+     ========================================================= -->
+<dialog id="codeDialog" aria-labelledby="codeDialogTitle">
+  <div class="dialog-head">
+    <h2 id="codeDialogTitle">This request as code</h2>
+    <button class="btn btn-small" id="closeCodeBtn" type="button">Close</button>
+  </div>
+  <div class="dialog-body">
+    <p class="note" style="margin-top: 0;">The key is never printed. Set it first in your terminal: <code>export GROQ_API_KEY=gsk_...</code></p>
+    <div class="code-title"><h3>curl</h3><button class="btn btn-small" id="copyCurlBtn" type="button">Copy</button></div>
+    <pre id="curlCode"></pre>
+    <div class="code-title"><h3>Python (OpenAI client pointed at Groq)</h3><button class="btn btn-small" id="copyPythonBtn" type="button">Copy</button></div>
+    <pre id="pythonCode"></pre>
+  </div>
+</dialog>
+
+<script>
+/* =========================================================
+   WHAT THIS DOES: Grab every element we need, once, by its id.
+   ========================================================= */
+const el = {
+  modelSelect:     document.getElementById("modelSelect"),
+  viewCodeBtn:     document.getElementById("viewCodeBtn"),
+  apiKey:          document.getElementById("apiKey"),
+  rememberKey:     document.getElementById("rememberKey"),
+  clearKeyBtn:     document.getElementById("clearKeyBtn"),
+  keyStatus:       document.getElementById("keyStatus"),
+  modelStatus:     document.getElementById("modelStatus"),
+  tempSlider:      document.getElementById("tempSlider"),
+  tempNumber:      document.getElementById("tempNumber"),
+  maxSlider:       document.getElementById("maxSlider"),
+  maxNumber:       document.getElementById("maxNumber"),
+  stopInput:       document.getElementById("stopInput"),
+  webSearchToggle: document.getElementById("webSearchToggle"),
+  webSearchReason: document.getElementById("webSearchReason"),
+  reasoningToggle: document.getElementById("reasoningToggle"),
+  reasoningReason: document.getElementById("reasoningReason"),
+  resetBtn:        document.getElementById("resetBtn"),
+  messages:        document.getElementById("messages"),
+  emptyHint:       document.getElementById("emptyHint"),
+  promptBox:       document.getElementById("promptBox"),
+  submitBtn:       document.getElementById("submitBtn"),
+  statTtft:        document.getElementById("statTtft"),
+  statTotal:       document.getElementById("statTotal"),
+  statTps:         document.getElementById("statTps"),
+  speedNote:       document.getElementById("speedNote"),
+  useInput:        document.getElementById("useInput"),
+  useReasoning:    document.getElementById("useReasoning"),
+  useOutput:       document.getElementById("useOutput"),
+  useTotal:        document.getElementById("useTotal"),
+  useLeft:         document.getElementById("useLeft"),
+  codeDialog:      document.getElementById("codeDialog"),
+  closeCodeBtn:    document.getElementById("closeCodeBtn"),
+  curlCode:        document.getElementById("curlCode"),
+  pythonCode:      document.getElementById("pythonCode"),
+  copyCurlBtn:     document.getElementById("copyCurlBtn"),
+  copyPythonBtn:   document.getElementById("copyPythonBtn"),
+};
+
+/* =========================================================
+   WHAT THIS DOES: Fixed settings for the app.
+   ========================================================= */
+const API_BASE = "https://api.groq.com/openai/v1";
+const KEY_STORAGE_NAME = "llmPlaygroundKey";
+
+const STARTER_PROMPT =
+`Classify the sentiment of each review as Positive or Negative.
+
+Review: "The battery lasts all day and the screen is gorgeous."
+Sentiment: Positive
+
+Review: "It stopped working after two days and support never replied."
+Sentiment: Negative
+
+Review: "Setup took five minutes and it just works."
+Sentiment:`;
+
+// Used only if the live model list can't be loaded
+const FALLBACK_MODELS = [
+  "llama-3.1-8b-instant",
+  "llama-3.3-70b-versatile",
+  "openai/gpt-oss-120b",
+  "openai/gpt-oss-20b",
+  "qwen/qwen3.8-27b",
+];
+const PREFERRED_MODEL = "llama-3.3-70b-versatile";
+
+/* =========================================================
+   WHAT THIS DOES: Everything the app remembers while it runs.
+   ========================================================= */
+const state = {
+  conversation: [],     // the messages we send to the API
+  streaming: false,     // true while a reply is arriving
+  controller: null,     // AbortController used by the Stop button
+  capabilities: {},     // model id -> what that model supports
+};
+
+/* =========================================================
+   WHAT THIS DOES: Small helper functions used everywhere.
+   ========================================================= */
+
+// Turn <, >, & and quotes into safe text so nothing in a reply can run as HTML
+function escapeHtml(text) {
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+// 1234 ms -> "1.23 s", 87 ms -> "87 ms"
+function formatMs(ms) {
+  if (ms === null || ms === undefined || isNaN(ms)) return "–";
+  if (ms < 1000) return Math.round(ms) + " ms";
+  return (ms / 1000).toFixed(2) + " s";
+}
+
+// Copy text to the clipboard and show "Copied" on the button for a moment
+async function copyText(text, button) {
+  const original = button.textContent;
+  try {
+    await navigator.clipboard.writeText(text);
+    button.textContent = "Copied";
+  } catch (error) {
+    button.textContent = "Copy failed";
+  }
+  setTimeout(function () { button.textContent = original; }, 1200);
+}
+
+/* =========================================================
+   WHAT THIS DOES: API key handling. The key is only kept in
+   sessionStorage (this browser tab) when the box is ticked.
+   ========================================================= */
+function getKey() {
+  return el.apiKey.value.trim();
+}
+
+function loadSavedKey() {
+  const saved = sessionStorage.getItem(KEY_STORAGE_NAME);
+  if (saved) {
+    el.apiKey.value = saved;
+    el.rememberKey.checked = true;
+  }
+}
+
+function saveKeyIfAllowed() {
+  if (el.rememberKey.checked && getKey() !== "") {
+    sessionStorage.setItem(KEY_STORAGE_NAME, getKey());
+  } else {
+    sessionStorage.removeItem(KEY_STORAGE_NAME);
+  }
+}
+
+function clearKey() {
+  el.apiKey.value = "";
+  el.rememberKey.checked = false;
+  sessionStorage.removeItem(KEY_STORAGE_NAME);
+  setNote(el.keyStatus, "Key cleared.", "");
+  fillModelDropdown(FALLBACK_MODELS, "Built-in list (not from the API)");
+  setNote(el.modelStatus, "Using the built-in model list (not loaded from the API).", "");
+  el.apiKey.focus();
+}
+
+// Set a helper note's text and colour ("", "good", "warn" or "bad")
+function setNote(noteElement, text, kind) {
+  noteElement.textContent = text;
+  noteElement.className = kind ? "note " + kind : "note";
+}
+
+/* =========================================================
+   WHAT THIS DOES: Keep each slider and its number box in sync.
+   ========================================================= */
+// Colour the part of the slider track to the left of the thumb
+function updateSliderFill(slider) {
+  const min = Number(slider.min);
+  const max = Number(slider.max);
+  const percent = (Number(slider.value) - min) / (max - min) * 100;
+  slider.style.setProperty("--fill", percent + "%");
+}
+
+function linkSliderAndNumber(slider, numberBox) {
+  updateSliderFill(slider);
+  slider.addEventListener("input", function () {
+    numberBox.value = slider.value;
+    updateSliderFill(slider);
+  });
+  numberBox.addEventListener("input", function () {
+    let value = Number(numberBox.value);
+    if (value < Number(slider.min)) value = Number(slider.min);
+    if (value > Number(slider.max)) value = Number(slider.max);
+    slider.value = value;
+    updateSliderFill(slider);
+  });
+  numberBox.addEventListener("change", function () {
+    numberBox.value = slider.value;   // tidy the box when the user leaves it
+  });
+}
+
+/* =========================================================
+   MODELS
+   WHAT THIS DOES: Works out what each model supports, so we
+   never send a parameter the model can't handle.
+     reasoning: "none", "optional" or "always"
+     webSearch: true or false
+   ========================================================= */
+function getCapabilities(modelId) {
+  const id = modelId.toLowerCase();
+
+  // GPT-OSS: always reasons, can use Groq's browser_search tool
+  if (id.includes("gpt-oss")) {
+    return { reasoning: "always", style: "gpt-oss", webSearch: true };
+  }
+  // Muse Spark and MiniMax: always reason, no web search
+  if (id.includes("muse-spark") || id.includes("minimax")) {
+    return { reasoning: "always", style: "parsed", webSearch: false };
+  }
+  // Qwen 3 family: thinking can be switched on or off
+  if (id.includes("qwen3")) {
+    let effortWhenOn = "default";
+    if (id.includes("qwen3.8")) effortWhenOn = "medium";
+    return { reasoning: "optional", style: "parsed", webSearch: false, effortWhenOn: effortWhenOn };
+  }
+  // Everything else: a plain chat model
+  return { reasoning: "none", webSearch: false };
+}
+
+// Skip models that can't chat (speech, text-to-speech, safety classifiers)
+function isChatModel(modelId) {
+  const id = modelId.toLowerCase();
+  const notChat = ["whisper", "tts", "orpheus", "playai", "guard"];
+  for (const word of notChat) {
+    if (id.includes(word)) return false;
+  }
+  return true;
+}
+
+// Put a list of model ids into the dropdown, keeping the current choice if possible
+function fillModelDropdown(modelIds, groupLabel) {
+  const previous = el.modelSelect.value;
+  el.modelSelect.innerHTML = "";
+
+  const group = document.createElement("optgroup");
+  group.label = groupLabel;
+  for (const id of modelIds) {
+    state.capabilities[id] = getCapabilities(id);
+    const option = document.createElement("option");
+    option.value = id;
+    option.textContent = id;
+    group.appendChild(option);
+  }
+  el.modelSelect.appendChild(group);
+
+  if (modelIds.includes(previous)) el.modelSelect.value = previous;
+  else if (modelIds.includes(PREFERRED_MODEL)) el.modelSelect.value = PREFERRED_MODEL;
+  else if (modelIds.length > 0) el.modelSelect.value = modelIds[0];
+
+  updateToggles();
+}
+
+// Ask Groq which models this key can use
+async function loadModels() {
+  const key = getKey();
+  if (!key.startsWith("gsk_") || key.length < 20) return;
+
+  setNote(el.modelStatus, "Loading models…", "");
+  try {
+    const response = await fetch(API_BASE + "/models", {
+      headers: { Authorization: "Bearer " + key },
+    });
+
+    if (!response.ok) {
+      const raw = await readErrorBody(response);
+      const friendly = friendlyError(response.status, raw.message, raw.code, response.headers.get("retry-after"));
+      setNote(el.keyStatus, friendly, "bad");
+      setNote(el.modelStatus, "Using the built-in model list (not loaded from the API).", "");
+      fillModelDropdown(FALLBACK_MODELS, "Built-in list (not from the API)");
+      return;
+    }
+
+    const data = await response.json();
+    const ids = [];
+    for (const model of data.data) {
+      if (model.active === false) continue;
+      if (!isChatModel(model.id)) continue;
+      ids.push(model.id);
+    }
+    ids.sort();
+
+    fillModelDropdown(ids, "Loaded from Groq");
+    setNote(el.modelStatus, ids.length + " models loaded", "good");
+    setNote(el.keyStatus, "Key accepted.", "good");
+  } catch (error) {
+    setNote(el.modelStatus, "Couldn't reach Groq, so the built-in list is shown.", "warn");
+    fillModelDropdown(FALLBACK_MODELS, "Built-in list (not from the API)");
+  }
+}
+
+// Wait until the user stops typing the key for 600 ms, then load models
+let keyTimer = null;
+function onKeyTyped() {
+  saveKeyIfAllowed();
+  clearTimeout(keyTimer);
+  keyTimer = setTimeout(loadModels, 600);
+}
+
+/* =========================================================
+   WHAT THIS DOES: Turn the Web search and Reasoning toggles on
+   or off depending on what the chosen model supports, with a
+   one-line reason when a toggle is locked.
+   ========================================================= */
+function updateToggles() {
+  const caps = getCapabilities(el.modelSelect.value || "");
+
+  // Web search
+  if (caps.webSearch) {
+    el.webSearchToggle.disabled = false;
+    el.webSearchReason.textContent = "";
+  } else {
+    el.webSearchToggle.disabled = true;
+    el.webSearchToggle.checked = false;
+    el.webSearchReason.textContent = "Locked: on Groq only the gpt-oss models can search the web.";
+  }
+
+  // Reasoning
+  if (caps.reasoning === "none") {
+    el.reasoningToggle.disabled = true;
+    el.reasoningToggle.checked = false;
+    el.reasoningReason.textContent = "Locked: this model has no thinking mode.";
+  } else if (caps.reasoning === "always") {
+    el.reasoningToggle.disabled = true;
+    el.reasoningToggle.checked = true;
+    if (caps.style === "gpt-oss") {
+      el.reasoningReason.textContent = "Locked on: this model always thinks (sent with reasoning_effort: low).";
+    } else {
+      el.reasoningReason.textContent = "Locked on: this model always thinks.";
+    }
+  } else {
+    el.reasoningToggle.disabled = false;
+    el.reasoningReason.textContent = "";
+  }
+}
+
+/* =========================================================
+   WHAT THIS DOES: Build the exact JSON body we send to Groq.
+   Only adds a parameter when the model supports it.
+   ========================================================= */
+function parseStopSequences() {
+  const parts = el.stopInput.value.split(",");
+  const stops = [];
+  for (const part of parts) {
+    const trimmed = part.trim();
+    if (trimmed !== "" && stops.length < 4) stops.push(trimmed);
+  }
+  return stops;
+}
+
+function buildRequestBody(messages) {
+  const model = el.modelSelect.value;
+  const caps = getCapabilities(model);
+
+  const body = {
+    model: model,
+    messages: messages,
+    temperature: Number(el.tempSlider.value),
+    max_completion_tokens: Number(el.maxSlider.value),
+    stream: true,
+    stream_options: { include_usage: true },
+  };
+
+  const stops = parseStopSequences();
+  if (stops.length > 0) body.stop = stops;
+
+  // Reasoning parameters differ by model family
+  if (caps.reasoning === "always") {
+    if (caps.style === "gpt-oss") {
+      body.include_reasoning = true;
+      body.reasoning_effort = "low";
+    } else {
+      body.reasoning_format = "parsed";
+    }
+  } else if (caps.reasoning === "optional") {
+    if (el.reasoningToggle.checked) {
+      body.reasoning_format = "parsed";
+      body.reasoning_effort = caps.effortWhenOn;
+    } else {
+      body.reasoning_effort = "none";
+    }
+  }
+
+  // Web search is a built-in tool on the gpt-oss models
+  if (caps.webSearch && el.webSearchToggle.checked) {
+    body.tools = [{ type: "browser_search" }];
+    body.tool_choice = "required";
+  }
+
+  return body;
+}
+
+/* =========================================================
+   MARKDOWN
+   WHAT THIS DOES: A small markdown renderer. It escapes all
+   HTML first, then adds code blocks, headings, lists, bold,
+   inline code and citation links.
+   ========================================================= */
+function renderMarkdown(source, sources) {
+  // 1. Pull out ``` code blocks so nothing inside them is changed.
+  //    An unfinished block (still streaming) runs to the end.
+  const codeBlocks = [];
+  let text = source.replace(/```([\w+#.-]*)[^\n]*\n?([\s\S]*?)(```|$)/g, function (whole, lang, code) {
+    codeBlocks.push({ lang: lang, code: code.replace(/\n$/, "") });
+    return "\u0000CODE" + (codeBlocks.length - 1) + "\u0000";
+  });
+
+  // 2. Escape everything else
+  text = escapeHtml(text);
+
+  // 3. Go line by line
+  const lines = text.split("\n");
+  let html = "";
+  let paragraph = [];
+  let listType = null;   // "ul", "ol" or null
+
+  function flushParagraph() {
+    if (paragraph.length > 0) {
+      html += "<p>" + paragraph.map(function (line) { return renderInline(line, sources); }).join("<br>") + "</p>";
+      paragraph = [];
+    }
+  }
+  function closeList() {
+    if (listType !== null) {
+      html += "</" + listType + ">";
+      listType = null;
+    }
+  }
+  function openList(type) {
+    if (listType !== type) {
+      closeList();
+      html += "<" + type + ">";
+      listType = type;
+    }
+  }
+
+  for (const line of lines) {
+    const codeOnly = line.trim().match(/^\u0000CODE(\d+)\u0000$/);
+    const heading = line.match(/^(#{1,6})\s+(.*)$/);
+    const bullet = line.match(/^\s*[-*+]\s+(.*)$/);
+    const numbered = line.match(/^\s*\d+[.)]\s+(.*)$/);
+
+    if (codeOnly) {
+      flushParagraph(); closeList();
+      html += codeBlockHtml(codeBlocks[Number(codeOnly[1])]);
+    } else if (heading) {
+      flushParagraph(); closeList();
+      const level = heading[1].length;
+      let tag = "h5";
+      if (level === 1) tag = "h3";
+      if (level === 2) tag = "h4";
+      html += "<" + tag + ">" + renderInline(heading[2], sources) + "</" + tag + ">";
+    } else if (bullet) {
+      flushParagraph(); openList("ul");
+      html += "<li>" + renderInline(bullet[1], sources) + "</li>";
+    } else if (numbered) {
+      flushParagraph(); openList("ol");
+      html += "<li>" + renderInline(numbered[1], sources) + "</li>";
+    } else if (line.trim() === "") {
+      flushParagraph(); closeList();
+    } else {
+      closeList();
+      paragraph.push(line);
+    }
+  }
+  flushParagraph();
+  closeList();
+
+  // 4. A code block that shared a line with text
+  html = html.replace(/\u0000CODE(\d+)\u0000/g, function (whole, index) {
+    return codeBlockHtml(codeBlocks[Number(index)]);
+  });
+  return html;
+}
+
+// Bold, inline code and 【n†...】 citations inside one line (already escaped)
+function renderInline(line, sources) {
+  const codes = [];
+  let out = line.replace(/`([^`]+)`/g, function (whole, code) {
+    codes.push(code);
+    return "\u0001" + (codes.length - 1) + "\u0001";
+  });
+  out = out.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  out = out.replace(/【(\d+)†[^】]*】/g, function (whole, number) {
+    return citationHtml(Number(number), sources);
+  });
+  out = out.replace(/\u0001(\d+)\u0001/g, function (whole, index) {
+    return "<code>" + codes[Number(index)] + "</code>";
+  });
+  return out;
+}
+
+// One code block with a language label and a Copy button
+function codeBlockHtml(block) {
+  const label = block.lang ? escapeHtml(block.lang) : "code";
+  return '<div class="code-block"><div class="code-head"><span>' + label + "</span>" +
+         '<button class="btn btn-small copy-code" type="button">Copy</button></div>' +
+         "<pre><code>" + escapeHtml(block.code) + "</code></pre></div>";
+}
+
+// [n] citation, linked when we know the source
+function citationHtml(index, sources) {
+  const label = "[" + (index + 1) + "]";
+  const source = sources ? sources[index] : undefined;
+  if (source && /^https?:\/\//.test(source.url)) {
+    return '<sup><a href="' + escapeHtml(source.url) + '" target="_blank" rel="noopener noreferrer">' + label + "</a></sup>";
+  }
+  return "<sup>" + label + "</sup>";
+}
+
+// Some models put thinking inside <think>...</think> in the answer text.
+// This separates the two.
+function splitThinkTags(text) {
+  const start = text.indexOf("<think>");
+  if (start === -1) return { thinking: "", answer: text };
+  const end = text.indexOf("</think>", start);
+  if (end === -1) {
+    return { thinking: text.slice(start + 7), answer: text.slice(0, start) };
+  }
+  return {
+    thinking: text.slice(start + 7, end),
+    answer: text.slice(0, start) + text.slice(end + 8),
+  };
+}
+
+/* =========================================================
+   CHAT MESSAGES
+   WHAT THIS DOES: Create the bubbles on screen.
+   ========================================================= */
+function hideEmptyHint() {
+  el.emptyHint.style.display = "none";
+}
+
+function scrollToBottom() {
+  el.messages.scrollTop = el.messages.scrollHeight;
+}
+
+function addUserMessage(text) {
+  hideEmptyHint();
+  const wrapper = document.createElement("div");
+  wrapper.className = "msg user";
+  const bubble = document.createElement("div");
+  bubble.className = "bubble";
+  bubble.textContent = text;
+  wrapper.appendChild(bubble);
+  el.messages.appendChild(wrapper);
+  scrollToBottom();
+}
+
+// Build an empty assistant reply and return its parts so we can fill them in
+function createAssistantMessage(requestBody) {
+  hideEmptyHint();
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "msg assistant";
+
+  // Meta line: model, temperature, max tokens
+  const head = document.createElement("div");
+  head.className = "reply-head";
+  const meta = document.createElement("div");
+  meta.className = "meta";
+  const parts = [requestBody.model, "temp " + requestBody.temperature, "max " + requestBody.max_completion_tokens + " tokens"];
+  for (const part of parts) {
+    const span = document.createElement("span");
+    span.textContent = part;
+    meta.appendChild(span);
+  }
+  head.appendChild(meta);
+  wrapper.appendChild(head);
+
+  const bubble = document.createElement("div");
+  bubble.className = "bubble";
+
+  // "Request sent" panel showing the exact JSON body
+  const request = document.createElement("details");
+  request.className = "panel";
+  const requestSummary = document.createElement("summary");
+  requestSummary.textContent = "Request sent";
+  const requestPre = document.createElement("pre");
+  requestPre.textContent = JSON.stringify(requestBody, null, 2);
+  request.appendChild(requestSummary);
+  request.appendChild(requestPre);
+  bubble.appendChild(request);
+
+  // Thinking panel (hidden until thinking text arrives)
+  const thinking = document.createElement("details");
+  thinking.className = "panel";
+  thinking.hidden = true;
+  const thinkingSummary = document.createElement("summary");
+  thinkingSummary.textContent = "Thinking…";
+  const thinkingPre = document.createElement("pre");
+  thinkingPre.className = "thinking-text";
+  thinking.appendChild(thinkingSummary);
+  thinking.appendChild(thinkingPre);
+  bubble.appendChild(thinking);
+
+  // Status line ("Waiting for the first token…", "Searching the web…")
+  const status = document.createElement("div");
+  status.className = "status-line";
+  status.textContent = "Waiting for the first token";
+  bubble.appendChild(status);
+
+  // The answer itself
+  const answer = document.createElement("div");
+  answer.className = "md";
+  bubble.appendChild(answer);
+
+  // Source cards, error box, budget meter and tools go at the bottom
+  const extras = document.createElement("div");
+  bubble.appendChild(extras);
+
+  const tools = document.createElement("div");
+  tools.className = "reply-tools";
+  bubble.appendChild(tools);
+
+  wrapper.appendChild(bubble);
+  el.messages.appendChild(wrapper);
+  scrollToBottom();
+
+  return {
+    thinking: thinking,
+    thinkingSummary: thinkingSummary,
+    thinkingPre: thinkingPre,
+    thinkingCollapsed: false,
+    status: status,
+    answer: answer,
+    extras: extras,
+    tools: tools,
+    renderQueued: false,
+  };
+}
+
+// Draw the latest text into a reply. Called many times while streaming.
+function renderReply(reply, run) {
+  const split = splitThinkTags(run.answer);
+  const thinkingText = run.thinking + split.thinking;
+  const answerText = split.answer;
+  const answerStarted = answerText.trim() !== "";
+
+  // Thinking panel: open while thinking, collapse when the answer starts
+  if (thinkingText !== "") {
+    if (reply.thinking.hidden) {
+      reply.thinking.hidden = false;
+      reply.thinking.open = true;
+    }
+    reply.thinkingPre.textContent = thinkingText;
+    reply.thinkingPre.scrollTop = reply.thinkingPre.scrollHeight;
+    if (answerStarted && !reply.thinkingCollapsed) {
+      reply.thinking.open = false;
+      reply.thinkingCollapsed = true;
+    }
+  }
+
+  // Status line
+  if (answerStarted) {
+    reply.status.hidden = true;
+  } else if (run.webSearch && run.firstTokenAt === null) {
+    reply.status.textContent = "Searching the web";
+  } else if (thinkingText !== "") {
+    reply.status.textContent = "Thinking";
+  }
+
+  reply.answer.innerHTML = renderMarkdown(answerText, run.sources);
+  scrollToBottom();
+}
+
+// Only redraw once per animation frame, so fast streams stay smooth
+function scheduleRender(reply, run) {
+  if (reply.renderQueued) return;
+  reply.renderQueued = true;
+  requestAnimationFrame(function () {
+    reply.renderQueued = false;
+    renderReply(reply, run);
+  });
+}
+
+/* =========================================================
+   WEB SEARCH SOURCES
+   WHAT THIS DOES: Collect the pages a search visited, from
+   whichever field Groq sends them in.
+   ========================================================= */
+function addSource(run, url, title) {
+  if (!/^https?:\/\//.test(url)) return;
+  for (const existing of run.sources) {
+    if (existing.url === url) return;
+  }
+  let host = url;
+  try { host = new URL(url).hostname.replace(/^www\./, ""); } catch (error) { /* keep the url */ }
+  run.sources.push({ url: url, title: title || host, host: host });
+}
+
+function collectSources(executedTools, run) {
+  for (const tool of executedTools) {
+    if (tool.search_results && Array.isArray(tool.search_results.results)) {
+      for (const result of tool.search_results.results) {
+        addSource(run, result.url || "", result.title || "");
+      }
+    }
+    if (typeof tool.output === "string") {
+      // Search results often look like 【0†Page title†https://...】
+      const titled = tool.output.match(/【\d+†[^†】]*†https?:\/\/[^】\s]+】/g) || [];
+      for (const item of titled) {
+        const parts = item.slice(1, -1).split("†");
+        addSource(run, parts[2], parts[1]);
+      }
+      const urls = tool.output.match(/https?:\/\/[^\s"'<>)\]】]+/g) || [];
+      for (const url of urls) addSource(run, url, "");
+    }
+  }
+}
+
+function renderSourceCards(reply, run) {
+  if (run.sources.length === 0) return;
+  const grid = document.createElement("div");
+  grid.className = "sources";
+  for (let i = 0; i < run.sources.length; i++) {
+    const source = run.sources[i];
+    const card = document.createElement("a");
+    card.className = "source-card";
+    card.href = source.url;
+    card.target = "_blank";
+    card.rel = "noopener noreferrer";
+
+    const number = document.createElement("span");
+    number.className = "num";
+    number.textContent = "[" + (i + 1) + "]";
+    const title = document.createElement("span");
+    title.className = "title";
+    title.textContent = source.title;
+    const host = document.createElement("span");
+    host.className = "host";
+    host.textContent = source.host;
+
+    card.appendChild(number);
+    card.appendChild(title);
+    card.appendChild(host);
+    grid.appendChild(card);
+  }
+  reply.extras.appendChild(grid);
+}
+
+/* =========================================================
+   ERRORS
+   WHAT THIS DOES: Turn an API error into plain language.
+   ========================================================= */
+async function readErrorBody(response) {
+  const text = await response.text();
+  try {
+    const data = JSON.parse(text);
+    if (data.error) {
+      return { message: data.error.message || text, code: data.error.code || data.error.type || "" };
+    }
+  } catch (error) { /* not JSON */ }
+  return { message: text || response.statusText, code: "" };
+}
+
+function friendlyError(status, message, code, retryAfter) {
+  const lower = ((message || "") + " " + (code || "")).toLowerCase();
+
+  if (status === 401) {
+    return "Groq rejected this API key. Check it starts with gsk_ and hasn't been deleted in the Groq console.";
+  }
+  if (status === 429) {
+    let wait = "a few seconds";
+    if (retryAfter) wait = retryAfter + " seconds";
+    return "Rate limit reached. Wait " + wait + " and try again, or lower Max tokens.";
+  }
+  if (lower.includes("decommission") || lower.includes("model_not_found") ||
+      lower.includes("does not exist") || (status === 404 && lower.includes("model"))) {
+    return "This model is no longer available. Pick another one from the model list.";
+  }
+  if (status === 413 || lower.includes("context_length") || lower.includes("context length") ||
+      lower.includes("too long") || lower.includes("reduce the length")) {
+    return "The conversation is too long for this model. Press Reset conversation and try again.";
+  }
+  return "Groq returned an error (" + status + ").";
+}
+
+function showErrorInReply(reply, friendlyText, rawText) {
+  const box = document.createElement("div");
+  box.className = "error-box";
+  const strong = document.createElement("strong");
+  strong.textContent = friendlyText;
+  box.appendChild(strong);
+  if (rawText) {
+    const raw = document.createElement("div");
+    raw.className = "raw";
+    raw.textContent = rawText;
+    box.appendChild(raw);
+  }
+  reply.extras.appendChild(box);
+  reply.status.hidden = true;
+  scrollToBottom();
+}
+
+/* =========================================================
+   SENDING AND STREAMING
+   WHAT THIS DOES: Send the prompt, read the reply as a stream
+   of "data:" lines, and draw it as it arrives.
+   ========================================================= */
+function setStreaming(isOn) {
+  state.streaming = isOn;
+  // Brightens the light field behind the glass while tokens arrive
+  document.body.classList.toggle("is-streaming", isOn);
+  document.getElementById("chatState").textContent = isOn ? "Streaming" : "Idle";
+  el.modelSelect.disabled = isOn;
+  if (isOn) {
+    el.submitBtn.textContent = "Stop";
+    el.submitBtn.className = "btn btn-stop";
+  } else {
+    el.submitBtn.textContent = "Submit";
+    el.submitBtn.className = "btn btn-primary";
+  }
+}
+
+function stopStreaming() {
+  if (state.controller) state.controller.abort();
+}
+
+async function sendPrompt() {
+  // While streaming, the same button means Stop
+  if (state.streaming) {
+    stopStreaming();
+    return;
+  }
+
+  const key = getKey();
+  if (key === "") {
+    setNote(el.keyStatus, "Paste your Groq API key first (it starts with gsk_).", "bad");
+    el.apiKey.focus();
+    return;
+  }
+  const prompt = el.promptBox.value.trim();
+  if (prompt === "") return;
+
+  // Add the user's message to the conversation and build the request
+  state.conversation.push({ role: "user", content: prompt });
+  const body = buildRequestBody(state.conversation.slice());
+
+  addUserMessage(prompt);
+  const reply = createAssistantMessage(body);
+  el.promptBox.value = "";
+  analysePrompt();
+
+  // Everything we learn about this one reply
+  const run = {
+    startedAt: performance.now(),
+    firstTokenAt: null,
+    endedAt: null,
+    thinking: "",
+    answer: "",
+    finishReason: null,
+    usage: null,
+    sources: [],
+    webSearch: body.tools !== undefined,
+    stopped: false,
+    streamError: null,
+    maxTokens: body.max_completion_tokens,
+  };
+  if (run.webSearch) reply.status.textContent = "Searching the web";
+
+  const controller = new AbortController();
+  state.controller = controller;
+  setStreaming(true);
+
+  // 1. Send the request
+  let response;
+  try {
+    response = await fetch(API_BASE + "/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": "Bearer " + key,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    state.conversation.pop();   // the request never happened
+    if (error.name === "AbortError") {
+      run.stopped = true;
+      run.endedAt = performance.now();
+      finishReply(reply, run);
+    } else {
+      showErrorInReply(reply, "Couldn't reach Groq. Check your internet connection and try again.", error.message);
+      el.promptBox.value = prompt;
+    }
+    setStreaming(false);
+    return;
+  }
+
+  updateRateLimit(response.headers);
+
+  // 2. The API said no: explain why and give the prompt back
+  if (!response.ok) {
+    const raw = await readErrorBody(response);
+    const friendly = friendlyError(response.status, raw.message, raw.code, response.headers.get("retry-after"));
+    showErrorInReply(reply, friendly, raw.message);
+    state.conversation.pop();
+    el.promptBox.value = prompt;
+    analysePrompt();
+    setStreaming(false);
+    return;
+  }
+
+  // 3. Read the stream
+  try {
+    await readStream(response, run, reply);
+  } catch (error) {
+    if (error.name === "AbortError") run.stopped = true;
+    else run.streamError = error.message;
+  }
+  run.endedAt = performance.now();
+
+  // 4. Finish up: keep whatever text arrived (even after Stop)
+  const finalAnswer = splitThinkTags(run.answer).answer.trim();
+  if (finalAnswer !== "") {
+    state.conversation.push({ role: "assistant", content: finalAnswer });
+  }
+  finishReply(reply, run);
+  setStreaming(false);
+}
+
+// Read the response body piece by piece and split it into lines
+async function readStream(response, run, reply) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";   // holds a half-received line until the rest arrives
+
+  while (true) {
+    const result = await reader.read();
+    if (result.done) break;
+
+    buffer += decoder.decode(result.value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop();   // the last piece may be incomplete, keep it
+
+    for (const line of lines) {
+      handleStreamLine(line, run, reply);
+    }
+  }
+  if (buffer.trim() !== "") handleStreamLine(buffer, run, reply);
+}
+
+// One SSE line looks like:  data: {"choices":[{"delta":{"content":"Hi"}}]}
+function handleStreamLine(line, run, reply) {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("data:")) return;
+  const data = trimmed.slice(5).trim();
+  if (data === "[DONE]") return;
+
+  let chunk;
+  try {
+    chunk = JSON.parse(data);
+  } catch (error) {
+    return;   // ignore anything that isn't valid JSON
+  }
+  handleChunk(chunk, run, reply);
+}
+
+// Pull the useful fields out of one parsed chunk
+function handleChunk(chunk, run, reply) {
+  if (chunk.error) throw new Error(chunk.error.message || "The stream reported an error.");
+  if (chunk.x_groq && chunk.x_groq.error) throw new Error(chunk.x_groq.error.message || "The stream reported an error.");
+
+  // Token usage arrives near the end (x_groq.usage, or usage)
+  if (chunk.x_groq && chunk.x_groq.usage) run.usage = chunk.x_groq.usage;
+  if (chunk.usage) run.usage = chunk.usage;
+
+  const choice = chunk.choices && chunk.choices[0];
+  if (!choice) return;
+  const delta = choice.delta || {};
+
+  if (delta.reasoning) {
+    if (run.firstTokenAt === null) run.firstTokenAt = performance.now();
+    run.thinking += delta.reasoning;
+  }
+  if (delta.content) {
+    if (run.firstTokenAt === null) run.firstTokenAt = performance.now();
+    run.answer += delta.content;
+  }
+  if (delta.executed_tools) collectSources(delta.executed_tools, run);
+  if (choice.finish_reason) run.finishReason = choice.finish_reason;
+
+  scheduleRender(reply, run);
+}
+
+/* =========================================================
+   WHAT THIS DOES: Final touches when a reply ends: stop-reason
+   badge, budget meter, sources, copy button, side panels.
+   ========================================================= */
+function finishReply(reply, run) {
+  // If web search ran but no source list came back, use links in the answer
+  const answerText = splitThinkTags(run.answer).answer;
+  if (run.webSearch && run.sources.length === 0) {
+    const urls = answerText.match(/https?:\/\/[^\s"'<>)\]】]+/g) || [];
+    for (const url of urls) addSource(run, url, "");
+  }
+
+  renderReply(reply, run);
+  reply.status.hidden = true;
+
+  // Thinking summary
+  const reasoningTokens = getReasoningTokens(run.usage);
+  if (!reply.thinking.hidden) {
+    if (reasoningTokens !== null) reply.thinkingSummary.textContent = "Thinking (" + reasoningTokens + " tokens)";
+    else reply.thinkingSummary.textContent = "Thinking";
+  }
+
+  if (answerText.trim() === "" && !run.stopped && !run.streamError && reply.thinking.hidden) {
+    reply.answer.innerHTML = '<p style="color: var(--muted);">(empty reply)</p>';
+  }
+
+  renderSourceCards(reply, run);
+  if (run.streamError) showErrorInReply(reply, "The reply was cut off by an error.", run.streamError);
+  if (run.usage) renderBudgetMeter(reply, run);
+
+  // Stop-reason badge + copy button
+  const badge = document.createElement("span");
+  badge.className = "stop-badge";
+  badge.textContent = stopReasonText(run, answerText);
+  if (run.finishReason === "length") badge.className = "stop-badge length";
+  if (run.stopped) badge.className = "stop-badge stopped";
+  reply.tools.appendChild(badge);
+
+  const copyButton = document.createElement("button");
+  copyButton.className = "btn btn-small";
+  copyButton.type = "button";
+  copyButton.textContent = "Copy";
+  copyButton.setAttribute("aria-label", "Copy this reply");
+  copyButton.addEventListener("click", function () { copyText(answerText.trim(), copyButton); });
+  reply.tools.appendChild(copyButton);
+
+  updateSpeedPanel(run);
+  updateUsagePanel(run.usage);
+  scrollToBottom();
+}
+
+function getReasoningTokens(usage) {
+  if (!usage) return null;
+  if (usage.completion_tokens_details && typeof usage.completion_tokens_details.reasoning_tokens === "number") {
+    return usage.completion_tokens_details.reasoning_tokens;
+  }
+  if (typeof usage.reasoning_tokens === "number") return usage.reasoning_tokens;
+  return null;
+}
+
+// Plain-language reason the reply ended
+function stopReasonText(run, answerText) {
+  if (run.stopped) return "stopped by you";
+  if (run.finishReason === "length") {
+    const allThinking = answerText.trim() === "" && (run.thinking !== "" || splitThinkTags(run.answer).thinking !== "");
+    if (allThinking) return "hit max tokens (" + run.maxTokens + "): the whole budget was spent thinking";
+    return "hit max tokens (" + run.maxTokens + ")";
+  }
+  if (run.finishReason === "stop") return "end of sequence";
+  if (run.finishReason) return run.finishReason;
+  return "ended without a reason";
+}
+
+// The signature meter: how the max-tokens budget was spent
+function renderBudgetMeter(reply, run) {
+  const used = run.usage.completion_tokens || 0;
+  let thinkingTokens = getReasoningTokens(run.usage);
+  if (thinkingTokens === null) thinkingTokens = 0;
+  const answerTokens = Math.max(used - thinkingTokens, 0);
+  const budget = run.maxTokens;
+
+  const box = document.createElement("div");
+  box.className = "budget";
+  const track = document.createElement("div");
+  track.className = "budget-track";
+  track.setAttribute("role", "img");
+  track.setAttribute("aria-label", thinkingTokens + " thinking tokens and " + answerTokens + " answer tokens out of a " + budget + " token budget");
+
+  const thinkPart = document.createElement("div");
+  thinkPart.className = "budget-think";
+  thinkPart.style.width = Math.min(thinkingTokens / budget * 100, 100) + "%";
+  const answerPart = document.createElement("div");
+  answerPart.className = "budget-answer";
+  answerPart.style.width = Math.min(answerTokens / budget * 100, 100) + "%";
+  track.appendChild(thinkPart);
+  track.appendChild(answerPart);
+
+  const label = document.createElement("div");
+  label.className = "budget-label";
+  label.innerHTML =
+    '<span class="k-think">' + thinkingTokens + " thinking</span> + " +
+    '<span class="k-answer">' + answerTokens + " answer</span> = " +
+    used + " of " + budget + " max tokens";
+
+  box.appendChild(track);
+  box.appendChild(label);
+  reply.extras.appendChild(box);
+}
+
+/* =========================================================
+   WHAT THIS DOES: Fill in the Speed and Token usage panels.
+   ========================================================= */
+// Replay a short "new value" animation on a readout number
+function pulse(element) {
+  element.classList.remove("pop");
+  void element.offsetWidth;   // forces the browser to notice the class was removed
+  element.classList.add("pop");
+}
+
+function updateSpeedPanel(run) {
+  pulse(el.statTtft);
+  pulse(el.statTotal);
+  pulse(el.statTps);
+  if (run.firstTokenAt === null) {
+    el.statTtft.textContent = "–";
+  } else {
+    el.statTtft.textContent = formatMs(run.firstTokenAt - run.startedAt);
+  }
+  el.statTotal.textContent = formatMs(run.endedAt - run.startedAt);
+
+  // Prefer Groq's own generation time; otherwise use our stopwatch
+  let tokensPerSecond = null;
+  if (run.usage && run.usage.completion_tokens) {
+    if (run.usage.completion_time > 0) {
+      tokensPerSecond = run.usage.completion_tokens / run.usage.completion_time;
+      el.speedNote.textContent = "Tokens per second uses Groq's own generation time.";
+    } else if (run.firstTokenAt !== null && run.endedAt > run.firstTokenAt) {
+      tokensPerSecond = run.usage.completion_tokens / ((run.endedAt - run.firstTokenAt) / 1000);
+      el.speedNote.textContent = "Tokens per second measured in your browser.";
+    }
+  }
+  if (tokensPerSecond === null) el.statTps.textContent = "–";
+  else el.statTps.innerHTML = Math.round(tokensPerSecond) + " <small>tok/s</small>";
+}
+
+function updateUsagePanel(usage) {
+  if (!usage) {
+    el.useInput.textContent = "–";
+    el.useReasoning.textContent = "–";
+    el.useOutput.textContent = "–";
+    el.useTotal.textContent = "–";
+    return;
+  }
+  const reasoning = getReasoningTokens(usage);
+  pulse(el.useInput);
+  pulse(el.useReasoning);
+  pulse(el.useOutput);
+  pulse(el.useTotal);
+  el.useInput.textContent = usage.prompt_tokens !== undefined ? usage.prompt_tokens : "–";
+  el.useReasoning.textContent = reasoning !== null ? reasoning : "–";
+  el.useOutput.textContent = usage.completion_tokens !== undefined ? usage.completion_tokens : "–";
+  el.useTotal.textContent = usage.total_tokens !== undefined ? usage.total_tokens : "–";
+}
+
+// "Tokens left this minute" from the x-ratelimit-remaining-tokens header
+function updateRateLimit(headers) {
+  const remaining = headers.get("x-ratelimit-remaining-tokens");
+  if (remaining === null) {
+    el.useLeft.textContent = "hidden from the browser by Groq";
+    el.useLeft.className = "value dim";
+    return;
+  }
+  el.useLeft.textContent = remaining;
+  pulse(el.useLeft);
+  if (Number(remaining) < 1000) el.useLeft.className = "value warn";
+  else el.useLeft.className = "value";
+}
+
+function clearPanels() {
+  el.statTtft.textContent = "–";
+  el.statTotal.textContent = "–";
+  el.statTps.textContent = "–";
+  el.speedNote.textContent = "";
+  updateUsagePanel(null);
+}
+
+/* =========================================================
+   PROMPT ANALYSIS
+   WHAT THIS DOES: Reads the prompt with simple rules and says
+   how many answered examples it contains (zero/one/few-shot)
+   and which prompting techniques it uses. No AI involved.
+   ========================================================= */
+
+// Shorten long matched text so it fits in the panel
+function shorten(text) {
+  text = text.trim();
+  if (text.length > 70) return text.slice(0, 70) + "…";
+  return text;
+}
+
+// If a line looks like "Label: value", return the label and value
+function readLabelLine(line) {
+  const match = line.match(/^\s*([A-Za-z][A-Za-z0-9 _-]{0,24}):\s*(.*)$/);
+  if (match === null) return null;
+  return { label: match[1].trim().toLowerCase(), value: match[2].trim() };
+}
+
+// Is there an answer for the label on line i? (same line, or the next line)
+function hasAnswer(lines, i) {
+  const parsed = readLabelLine(lines[i]);
+  if (parsed.value !== "") return true;
+  const next = lines[i + 1];
+  if (next === undefined) return false;
+  if (next.trim() === "") return false;
+  if (readLabelLine(next) !== null) return false;
+  return true;
+}
+
+// Rules 1 and 2: "Input:" then "Output:", or "Q:" then "A:"
+function countNamedPairs(lines, questionLabels, answerLabels) {
+  let count = 0;
+  let example = "";
+  for (let i = 0; i < lines.length; i++) {
+    const first = readLabelLine(lines[i]);
+    if (first === null || !questionLabels.includes(first.label)) continue;
+
+    for (let j = i + 1; j < lines.length; j++) {
+      const second = readLabelLine(lines[j]);
+      if (second === null) continue;
+      if (answerLabels.includes(second.label) && hasAnswer(lines, j)) {
+        count = count + 1;
+        if (example === "") example = lines[i] + " → " + lines[j];
+      }
+      break;   // stop at the first label after the question
+    }
+  }
+  return { count: count, example: example };
+}
+
+// Rule 3: any pair of labels that repeats, like "Review:" then "Sentiment:"
+function countRepeatedLabels(lines) {
+  const knownLabels = ["input", "output", "q", "a", "question", "answer"];
+  const pairs = {};
+
+  const labelled = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (readLabelLine(lines[i]) !== null) labelled.push(i);
+  }
+
+  for (let k = 0; k + 1 < labelled.length; k++) {
+    const i = labelled[k];
+    const j = labelled[k + 1];
+    const a = readLabelLine(lines[i]).label;
+    const b = readLabelLine(lines[j]).label;
+    if (a === b) continue;
+    if (knownLabels.includes(a) && knownLabels.includes(b)) continue;
+
+    const key = a + "|" + b;
+    if (pairs[key] === undefined) pairs[key] = { total: 0, answered: 0, example: "" };
+    pairs[key].total = pairs[key].total + 1;
+    if (hasAnswer(lines, j)) {
+      pairs[key].answered = pairs[key].answered + 1;
+      if (pairs[key].example === "") pairs[key].example = lines[i] + " → " + lines[j];
+    }
+  }
+
+  let best = { count: 0, example: "" };
+  for (const key in pairs) {
+    const pair = pairs[key];
+    if (pair.total >= 2 && pair.answered > best.count) {
+      best = { count: pair.answered, example: pair.example };
+    }
+  }
+  return best;
+}
+
+// Rule 4: lines like "happy -> positive"
+function countArrows(lines) {
+  let count = 0;
+  let example = "";
+  for (const line of lines) {
+    const match = line.match(/^(.*\S)\s*(->|=>|→)\s*(.*)$/);
+    if (match !== null && match[3].trim() !== "") {
+      count = count + 1;
+      if (example === "") example = line;
+    }
+  }
+  return { count: count, example: example };
+}
+
+// Rule 5: lines like "great film": positive
+function countQuotedPairs(lines) {
+  let count = 0;
+  let example = "";
+  for (const line of lines) {
+    const match = line.match(/^\s*["“'](.+?)["”']\s*[:|,–-]\s*(.*)$/);
+    if (match !== null && match[2].trim() !== "") {
+      count = count + 1;
+      if (example === "") example = line;
+    }
+  }
+  return { count: count, example: example };
+}
+
+// Rule 6: blocks separated by ### or --- lines
+function countBlocks(lines) {
+  const blocks = [[]];
+  let separators = 0;
+  for (const line of lines) {
+    if (/^\s*(###|---)\s*$/.test(line)) {
+      separators = separators + 1;
+      blocks.push([]);
+    } else if (line.trim() !== "") {
+      blocks[blocks.length - 1].push(line);
+    }
+  }
+  if (separators === 0) return { count: 0, example: "" };
+
+  let count = 0;
+  let example = "";
+  for (let b = 0; b < blocks.length; b++) {
+    const block = blocks[b];
+    if (block.length < 2) continue;
+    const lastLine = block[block.length - 1].trim();
+    if (lastLine.endsWith(":")) continue;
+    // The first block is usually instructions; it only counts if it has a "Label:" line
+    if (b === 0 && !block.some(function (l) { return readLabelLine(l) !== null; })) continue;
+    count = count + 1;
+    if (example === "") example = block.join(" / ");
+  }
+  return { count: count, example: example };
+}
+
+// The four technique checks
+const TECHNIQUES = [
+  { name: "Chain-of-Thought",    pattern: /step[- ]by[- ]step|think (it )?through|show your (work|reasoning)|explain your reasoning|reason before/i },
+  { name: "Role prompting",      pattern: /\byou are (an?|the)\b[^.\n]*|\bact as\b[^.\n]*|\bimagine you are\b[^.\n]*|\bplay the role\b[^.\n]*/i },
+  { name: "Negative constraint", pattern: /\b(do not|don't|never|avoid|must not|should not)\b[^.\n]*/i },
+  { name: "Format constraint",   pattern: /\b(json|bullet points?|as a (list|table)|markdown|one word|in \d+ words|respond with|answer with|reply with|only (answer|respond|reply|output))\b[^.\n]*/i },
+];
+
+// Run every rule on the prompt and draw the result
+function analysePrompt() {
+  const text = el.promptBox.value;
+  const lines = text.split("\n");
+
+  const exampleRules = [
+    { name: "Input / Output pairs",       result: countNamedPairs(lines, ["input"], ["output"]) },
+    { name: "Q / A pairs",                result: countNamedPairs(lines, ["q", "question"], ["a", "answer"]) },
+    { name: "Other repeated labels",      result: countRepeatedLabels(lines) },
+    { name: "Arrows (->, =>)",            result: countArrows(lines) },
+    { name: "Quoted pairs",               result: countQuotedPairs(lines) },
+    { name: "Blocks split by ### or ---", result: countBlocks(lines) },
+  ];
+
+  // Largest count from any single rule (never the sum)
+  let examples = 0;
+  for (const rule of exampleRules) {
+    if (rule.result.count > examples) examples = rule.result.count;
+  }
+
+  const badge = document.getElementById("shotBadge");
+  if (examples === 0) badge.textContent = "ZERO-SHOT";
+  else if (examples === 1) badge.textContent = "ONE-SHOT";
+  else badge.textContent = "FEW-SHOT (" + examples + ")";
+
+  // Quoted text is blanked first, so words inside examples
+  // (like "never" in a review) don't count as instructions
+  const instructionsOnly = text.replace(/"[^"\n]*"|“[^”\n]*”/g, '""');
+  const chips = document.getElementById("techniqueChips");
+  chips.innerHTML = "";
+  const techniqueResults = [];
+  for (const technique of TECHNIQUES) {
+    const match = instructionsOnly.match(technique.pattern);
+    techniqueResults.push({ name: technique.name, match: match });
+    const chip = document.createElement("span");
+    chip.className = match ? "chip on" : "chip";
+    chip.textContent = technique.name;
+    chips.appendChild(chip);
+  }
+
+  const whyList = document.getElementById("whyList");
+  whyList.innerHTML = "";
+  for (const rule of exampleRules) {
+    addWhyItem(whyList, rule.result.count > 0, rule.name + ": " + rule.result.count + " answered", rule.result.example);
+  }
+  for (const technique of techniqueResults) {
+    const found = technique.match !== null;
+    addWhyItem(whyList, found, technique.name, found ? technique.match[0] : "");
+  }
+}
+
+// Add one line to the "Why" list: a tick with the matched text, or a grey cross
+function addWhyItem(list, found, label, matchedText) {
+  const item = document.createElement("li");
+  item.className = found ? "yes" : "no";
+
+  const mark = document.createElement("span");
+  mark.className = "mark";
+  mark.textContent = found ? "✓" : "✗";
+  item.appendChild(mark);
+  item.appendChild(document.createTextNode(label));
+
+  if (found && matchedText) {
+    const matched = document.createElement("span");
+    matched.className = "matched";
+    matched.textContent = shorten(matchedText);
+    matched.title = matchedText;
+    item.appendChild(matched);
+  }
+  list.appendChild(item);
+}
+
+// Wait until typing has stopped for 300 ms, then analyse
+let analysisTimer = null;
+function scheduleAnalysis() {
+  clearTimeout(analysisTimer);
+  analysisTimer = setTimeout(analysePrompt, 300);
+}
+
+/* =========================================================
+   VIEW CODE
+   WHAT THIS DOES: Show the next request as curl and Python.
+   The key is only ever written as $GROQ_API_KEY.
+   ========================================================= */
+
+// The request that Submit would send right now
+function buildPreviewBody() {
+  const messages = state.conversation.slice();
+  const prompt = el.promptBox.value.trim();
+  if (prompt !== "") messages.push({ role: "user", content: prompt });
+  return buildRequestBody(messages);
+}
+
+function buildCurl(body) {
+  // Inside single quotes, a ' must be written as '\''
+  const json = JSON.stringify(body, null, 2).replace(/'/g, "'\\''");
+  return "curl " + API_BASE + "/chat/completions \\\n" +
+         '  -H "Authorization: Bearer $GROQ_API_KEY" \\\n' +
+         '  -H "Content-Type: application/json" \\\n' +
+         "  -d '" + json + "'";
+}
+
+// Write a JavaScript value as Python (true -> True, null -> None, ...)
+function toPython(value, depth) {
+  const pad = "    ".repeat(depth + 1);
+  const closePad = "    ".repeat(depth);
+  if (value === null) return "None";
+  if (value === true) return "True";
+  if (value === false) return "False";
+  if (typeof value === "number") return String(value);
+  if (typeof value === "string") return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    if (value.length === 0) return "[]";
+    let out = "[\n";
+    for (const item of value) out += pad + toPython(item, depth + 1) + ",\n";
+    return out + closePad + "]";
+  }
+  const keys = Object.keys(value);
+  if (keys.length === 0) return "{}";
+  let out = "{\n";
+  for (const key of keys) out += pad + JSON.stringify(key) + ": " + toPython(value[key], depth + 1) + ",\n";
+  return out + closePad + "}";
+}
+
+function buildPython(body) {
+  // These two are Groq-only, so the OpenAI client needs them in extra_body
+  const groqOnly = ["include_reasoning", "reasoning_format"];
+  const extra = {};
+  let args = "";
+  for (const key of Object.keys(body)) {
+    if (groqOnly.includes(key)) extra[key] = body[key];
+    else args += "    " + key + "=" + toPython(body[key], 1) + ",\n";
+  }
+  if (Object.keys(extra).length > 0) {
+    args += "    extra_body=" + toPython(extra, 1) + ",\n";
+  }
+
+  return "import os\n" +
+    "from openai import OpenAI\n\n" +
+    "# Groq speaks the same language as OpenAI, so we point the OpenAI client at Groq\n" +
+    "client = OpenAI(\n" +
+    '    base_url="' + API_BASE + '",\n' +
+    '    api_key=os.environ["GROQ_API_KEY"],\n' +
+    ")\n\n" +
+    "stream = client.chat.completions.create(\n" + args + ")\n\n" +
+    "# Print each piece of the answer as it arrives\n" +
+    "for chunk in stream:\n" +
+    "    if len(chunk.choices) > 0:\n" +
+    "        text = chunk.choices[0].delta.content\n" +
+    "        if text:\n" +
+    '            print(text, end="")\n' +
+    "print()\n";
+}
+
+function openCodeDialog() {
+  const body = buildPreviewBody();
+  el.curlCode.textContent = buildCurl(body);
+  el.pythonCode.textContent = buildPython(body);
+  el.codeDialog.showModal();
+}
+
+/* =========================================================
+   WHAT THIS DOES: Clear the chat and start again.
+   ========================================================= */
+function resetConversation() {
+  stopStreaming();
+  state.conversation = [];
+  el.messages.innerHTML = "";
+  el.messages.appendChild(el.emptyHint);
+  el.emptyHint.style.display = "";
+  el.promptBox.value = STARTER_PROMPT;
+  clearPanels();
+  analysePrompt();
+}
+
+/* =========================================================
+   WHAT THIS DOES: Keyboard shortcuts.
+     Ctrl+Enter / Cmd+Enter in the prompt box: submit
+     Escape while a reply is streaming: stop (keeps the text)
+   ========================================================= */
+el.promptBox.addEventListener("keydown", function (event) {
+  if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+    event.preventDefault();
+    if (!state.streaming) sendPrompt();
+  }
+});
+document.addEventListener("keydown", function (event) {
+  if (event.key === "Escape" && state.streaming) {
+    event.preventDefault();
+    stopStreaming();
+  }
+});
+
+/* =========================================================
+   WHAT THIS DOES: Connect buttons and inputs to the functions
+   above, then set up the page.
+   ========================================================= */
+linkSliderAndNumber(el.tempSlider, el.tempNumber);
+linkSliderAndNumber(el.maxSlider, el.maxNumber);
+
+el.apiKey.addEventListener("input", onKeyTyped);
+el.rememberKey.addEventListener("change", saveKeyIfAllowed);
+el.clearKeyBtn.addEventListener("click", clearKey);
+el.modelSelect.addEventListener("change", updateToggles);
+el.submitBtn.addEventListener("click", sendPrompt);
+el.resetBtn.addEventListener("click", resetConversation);
+el.promptBox.addEventListener("input", scheduleAnalysis);
+
+el.viewCodeBtn.addEventListener("click", openCodeDialog);
+el.closeCodeBtn.addEventListener("click", function () { el.codeDialog.close(); });
+el.copyCurlBtn.addEventListener("click", function () { copyText(el.curlCode.textContent, el.copyCurlBtn); });
+el.copyPythonBtn.addEventListener("click", function () { copyText(el.pythonCode.textContent, el.copyPythonBtn); });
+
+// Copy buttons on code blocks inside replies (one listener for all of them)
+el.messages.addEventListener("click", function (event) {
+  const button = event.target.closest(".copy-code");
+  if (!button) return;
+  const code = button.closest(".code-block").querySelector("code").textContent;
+  copyText(code, button);
+});
+
+// Start-up
+fillModelDropdown(FALLBACK_MODELS, "Built-in list (not from the API)");
+loadSavedKey();
+el.promptBox.value = STARTER_PROMPT;
+analysePrompt();
+if (getKey() !== "") loadModels();
+</script>
+</body>
+</html>
